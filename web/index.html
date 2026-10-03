@@ -1,0 +1,84 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>GeoCheckIn</title>
+<style>
+:root{--bg:#08111f;--card:#101d31;--line:#253756;--txt:#e8f0ff;--muted:#9fb0ca;--ok:#22c55e;--bad:#ef4444;--accent:#3b82f6}
+*{box-sizing:border-box}body{margin:0;background:linear-gradient(135deg,#08111f,#0d1b2e);color:var(--txt);font-family:Arial,sans-serif}
+header{padding:24px;text-align:center;border-bottom:1px solid var(--line)}h1{margin:0}header p{color:var(--muted)}
+main{max-width:1200px;margin:auto;padding:20px;display:grid;grid-template-columns:1fr 1fr;gap:20px}.card{background:rgba(16,29,49,.96);border:1px solid var(--line);border-radius:16px;padding:18px;margin-bottom:16px}
+label{display:block;margin:10px 0 6px;color:var(--muted)}input{width:100%;padding:12px;border-radius:9px;border:1px solid var(--line);background:#091526;color:white}
+button{border:0;border-radius:9px;padding:12px 14px;margin:8px 5px 0 0;cursor:pointer;background:var(--accent);color:white;font-weight:bold}.secondary{background:#334155}.danger{background:#b91c1c}
+.event{border:1px solid var(--line);padding:14px;border-radius:12px;margin-top:10px;cursor:pointer}.event.selected{border-color:var(--accent);box-shadow:0 0 0 2px rgba(59,130,246,.2)}.tag{float:right;padding:4px 8px;border-radius:999px;font-size:12px}.active{background:#14532d}.inactive{background:#7f1d1d}
+#geofence,#result{padding:16px;border-radius:12px;font-weight:bold;margin-top:12px;background:#0b1627}.inside{border-left:4px solid var(--ok)}.outside{border-left:4px solid var(--bad)}
+#map{height:390px;position:relative;overflow:hidden;background:radial-gradient(circle,#152b49,#08111f);border-radius:16px;border:1px solid var(--line)}
+#circle{position:absolute;border:2px solid rgba(59,130,246,.9);border-radius:50%;left:50%;top:50%;transform:translate(-50%,-50%);width:250px;height:250px}.pin{position:absolute;font-size:28px;transform:translate(-50%,-50%)}#eventPin{left:50%;top:50%}#userPin{left:50%;top:50%}.legend{display:flex;gap:18px;color:var(--muted);padding:12px}
+.small{font-size:13px;color:var(--muted)}@media(max-width:800px){main{grid-template-columns:1fr}}
+</style>
+</head>
+<body>
+<header><h1>📍 GeoCheckIn</h1><p>Comprovação de presença por geolocalização</p><div id="account" class="small">Verificando login Google...</div><a id="logout" href="/logout" style="display:none;color:#9fb0ca">Sair</a></header>
+<main>
+<section>
+<div class="card"><h2>1. Identificação</h2>
+<div id="googleUser" class="small">Carregando conta Google...</div>
+<label>Token de integridade</label><input id="token" value="DEVICE_OK">
+<p class="small">Para teste, use DEVICE_OK. MOCK_LOCATION, ROOTED e EMULATOR são rejeitados. Esta validação é apenas uma simulação.</p>
+</div>
+<div class="card"><h2>2. Eventos</h2><button onclick="carregarEventos()">🔄 Atualizar eventos</button><div id="events">Carregando eventos...</div></div>
+<div class="card"><h2>3. Localização</h2>
+<label>Latitude</label><input id="lat" value="-15.793889" oninput="atualizarGeofence()">
+<label>Longitude</label><input id="lon" value="-47.882778" oninput="atualizarGeofence()">
+<button onclick="usarMinhaLocalizacao()">📡 Usar minha localização</button>
+<button class="secondary" onclick="usarLocalEvento()">📌 Usar localização do evento</button>
+<div id="geofence">Selecione um evento.</div>
+<button onclick="fazerCheckin()">✅ Fazer Check-in</button>
+<div id="result">Aguardando check-in...</div>
+</div>
+</section>
+<section>
+<div class="card"><h2>Mapa / Geofence</h2>
+<div id="map"><div id="circle"></div><div id="eventPin" class="pin">🔵</div><div id="userPin" class="pin">🟢</div></div>
+<div class="legend"><span>🔵 Evento</span><span>🟢 Você</span></div>
+<p class="small">Representação visual da distância relativa. Não é um mapa real.</p>
+</div>
+</section>
+</main>
+<script>
+let eventos=[], selecionado=null;
+const $=id=>document.getElementById(id);
+function haversine(lat1,lon1,lat2,lon2){const R=6371000,p=Math.PI/180,dlat=(lat2-lat1)*p,dlon=(lon2-lon1)*p,a=Math.sin(dlat/2)**2+Math.cos(lat1*p)*Math.cos(lat2*p)*Math.sin(dlon/2)**2;return R*2*Math.atan2(Math.sqrt(a),Math.sqrt(1-a));}
+async function carregarEventos(){
+ const box=$("events"); box.textContent="Carregando eventos...";
+ try{const r=await fetch("/api/v1/eventos");if(!r.ok)throw Error("API");eventos=await r.json();box.innerHTML="";
+ eventos.forEach(e=>{const d=document.createElement("div");d.className="event"+(selecionado?.id===e.id?" selected":"");d.innerHTML=`<b>${e.titulo}</b><span class="tag ${e.ativo?"active":"inactive"}">${e.ativo?"ATIVO":"INATIVO"}</span><br><span class="small">ID: ${e.id} · Raio: ${e.raioMetros} m<br>📍 ${e.latitude}, ${e.longitude}</span>`;d.onclick=()=>{selecionado=e;carregarEventos();atualizarGeofence()};box.appendChild(d)});
+ if(!selecionado&&eventos.length){selecionado=eventos[0];carregarEventos();atualizarGeofence();}
+ }catch(e){console.error(e);box.textContent="❌ Erro ao carregar eventos."}
+}
+function usarLocalEvento(){if(!selecionado)return alert("Selecione um evento.");$("lat").value=selecionado.latitude;$("lon").value=selecionado.longitude;atualizarGeofence();}
+function atualizarGeofence(){
+ if(!selecionado)return;const lat=parseFloat($("lat").value),lon=parseFloat($("lon").value);if(Number.isNaN(lat)||Number.isNaN(lon))return;
+ const d=haversine(lat,lon,selecionado.latitude,selecionado.longitude), dentro=d<=selecionado.raioMetros;
+ $("geofence").className=dentro?"inside":"outside";$("geofence").textContent=`${dentro?"DENTRO":"FORA"} do raio · distância: ${d.toFixed(2)} m · limite: ${selecionado.raioMetros} m`;
+ const scale=Math.min(120,d/selecaoRaio()*120); $("userPin").style.left=(50+Math.min(35,scale/4))+"%";$("userPin").style.top=(50+Math.min(25,scale/6))+"%";
+}
+function selecaoRaio(){return selecionado?.raioMetros||30}
+function usarMinhaLocalizacao(){
+ if(!navigator.geolocation){alert("Geolocalização não suportada.");return}
+ navigator.geolocation.getCurrentPosition(p=>{$("lat").value=p.coords.latitude;$("lon").value=p.coords.longitude;atualizarGeofence()},e=>alert("Não foi possível obter sua localização: "+e.message),{enableHighAccuracy:true,timeout:10000});
+}
+async function fazerCheckin(){
+ const result=$("result");if(!selecionado){result.textContent="❌ Selecione um evento.";return}
+ try{result.textContent="Enviando check-in...";const r=await fetch("/api/v1/checkin",{method:"POST",headers:{"Content-Type":"application/json","X-Tenant-ID":"empresa-demo"},body:JSON.stringify({eventoId:selecionado.id,latitude:parseFloat($("lat").value),longitude:parseFloat($("lon").value),integrityToken:$("token").value.trim()})});const data=await r.json();if(!r.ok)throw data;result.innerHTML=`✅ ${data.mensagem}<br><br>Evento: ${data.evento}<br>Usuário: ${data.usuario}<br>Distância: ${data.distanciaMetros} m<br>Status: ${data.status}`;result.className="inside"}catch(e){result.textContent="❌ "+(e.erro||"Erro inesperado.");result.className="outside"}}
+async function carregarUsuario(){
+ try{const r=await fetch("/api/me");if(r.status===401){window.location.href="/";return}const u=await r.json();
+ const texto=`👤 ${u.name||"Usuário Google"}<br>✉️ ${u.email}<br>Google: ${u.emailVerified?"e-mail verificado":"não verificado"}`;
+ $("account").innerHTML=texto;$("googleUser").innerHTML=texto;$("logout").style.display="inline-block";
+ }catch(e){$("account").textContent="❌ Não foi possível verificar a sessão Google."}
+}
+carregarUsuario();
+carregarEventos();
+</script>
+</body></html>
